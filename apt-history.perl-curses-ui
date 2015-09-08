@@ -300,8 +300,8 @@ my $package=$packages[0];
 my $history_tab = $win->add(
   "tab",
   "Notebook",
-  -height => 10,
   -y => $win->height()-15,
+  -height => 12
 );
 $history_tab->set_binding ( sub { $packages_list -> focus(); }, CUI_TAB());
 
@@ -313,7 +313,7 @@ my $status = $win->add ( "help text",
   -border => 1,
   -title => "keybindings",
   -width => -1,
-  -y => -3,
+  -y => -1,
   -paddingspaces => 1
 );
 
