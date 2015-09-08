@@ -1,0 +1,342 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+
+use Curses::UI;
+use Curses::UI::Common;
+
+use Data::Dumper;
+
+sub read_package_list
+{
+  my %list;
+  my $i=0;
+  my ($package, $arch, $status, $version);
+  
+  open my $grep_status,  "grep-status -n -FPackage '' ".
+        " -s Package -s Architecture".
+        " -s Version -s Status -n |".
+        "grep . |";
+  
+  while (<$grep_status>)
+  {
+    chomp;
+    $i++;
+    if ($i % 4 == 1) { $package = $_; }
+    if ($i % 4 == 2) { $arch = $_; }
+    if ($i % 4 == 3) { $version = $_; }
+    if ($i % 4 == 0) 
+    {
+      $status = $_; $status =~ s, ,/,g ;
+      $list{"$package:$arch"}="$version"."_"."$status";
+    }
+    
+  }
+  return %list;
+}
+
+my ($first_action_date);
+sub read_package_apt_history
+{
+  my $packages = shift;
+  my %packages_hash = map { $_ => 1 } @$packages;
+  my %history;
+  my ($start_date, $end_date);
+  my ($start_time, $end_time);
+  my ($commandline, $action, $changes,$error)=("","","",0);
+  my ($resume_log, $message_error);
+
+  open my $hfh, '{ 
+    zcat $(ls -rt /var/log/apt/history.log*gz)
+    cat /var/log/apt/history.log;
+    } |';
+  while (<$hfh>)
+  {
+    if (/^Start-Date: (....-..-..) +(..:..:..)/)
+    {
+      $start_date = $1;  
+      $start_time = $2;
+      if (not $first_action_date)
+      {
+        $first_action_date = "$start_date $start_time";
+      }
+    
+    }
+    elsif (/^End-Date: (....-..-..) +(..:..:..)/)
+    {
+      $end_date = $1;  
+      $end_time = $2;  
+
+      # package:architecture
+      # first version
+      # possibly second version
+      while ($changes =~ /
+        ([a-z0-9][a-z0-9.+-]+):([a-z0-9-]+)\s 
+        \(([A-Za-z0-9.~+-]+) 
+        (?:,\s([A-Za-z0-9.~+-]+))? 
+        \)
+        /xg)
+      {
+        my $package=$1;
+        my $arch=$2;
+        my $version_1=$3;
+        my $version_transition=$version_1;
+        if ($4) {
+          $version_transition .= " => $4";
+        }
+        if ($error == 1)
+        {
+          $message_error="Possible failed, see dpkg logs";
+          $resume_log="$start_date $start_time:".
+                      " $action $arch ($version_transition) [$message_error]";
+        }
+        else
+        {
+          $resume_log="$start_date $start_time:".
+                      " $action $arch ($version_transition)";
+        }
+        if (not $packages_hash{"$package:$arch"})
+        {
+          $packages_hash{"$package:$arch"}=1;
+          push @$packages, "$package:$arch";
+        }
+        push @{$history{package}{apt}{"$package:$arch"}}, $resume_log;
+        $error=0;
+      }
+    }
+    elsif (/^Commandline: (.*)/)
+    {
+      $commandline = $1;
+    }
+    elsif (/^(Install|Upgrade|Remove|Purge|Downgrade): (.*)$/)
+    {
+      $action=$1;
+      $changes=$2;
+    }
+    elsif (/^Error/)
+    {
+      $error=1;
+    }
+  }
+  foreach my $package (@{$packages})
+  {
+    if (not $history{package}{apt}{$package})
+    {
+      push @{$history{package}{apt}{$package}},
+            "Without changes since $first_action_date";
+    }
+  }
+  return %history;
+}
+
+# 
+#      5 conffile   (add apt-file?)
+#   9828 configure
+#   1009 install
+#    523 purge
+#   1135 remove
+#   1371 startup => ??
+# 111883 status
+#   2198 trigproc
+#   9031 upgrade
+
+sub read_package_dpkg_history
+{
+  my $packages = shift;
+  my $ref_history = shift;
+  my $ref_packages_version = shift;
+  my %history=%{$ref_history};
+  my %packages_hash = map { $_ => 1 } @$packages;
+  open my $hfh, '{
+                  zcat $(ls -rt /var/log/dpkg.log*gz)
+                  cat /var/log/dpkg.log ;
+                }|';
+  while (<$hfh>)
+  {
+    my $package;
+    chomp;
+    if (/....-..-..\s..:..:..\s
+        (?:configure|install|purge|
+      remove|trigproc|upgrade)\s(\S+)\s
+      /x)
+    {
+      $package = $1;
+      push @{$history{package}{dpkg}{$package}},$_;
+    }
+    elsif (/....-..-..\s..:..:..\s
+      status\s(?:config-files|
+        half-configured|half-installed|
+        installed|not-installed|
+        triggers-awaited|triggers-pending|
+        unpacked)\s(\S+)\s
+      /x)
+    {
+      $package = $1;
+      push @{$history{package}{dpkg}{$package}},$_;
+    }
+    elsif (/....-..-..\s..:..:..\s
+      conffile\s(\S+)/x)
+    {
+      next ;
+      #$package=`dpkg -S $1 2> /dev/null| grep -o '^[^:]*'`;
+      # $package='' if ($package eq "");
+      
+    }
+    elsif (/....-..-..\s..:..:..\sstartup/)
+    {
+      next;
+    }
+    else
+    {
+      print "$_ no encuadra ...\n";
+    }
+    if ($packages_hash{"$package"})
+    {
+      push @{$history{package}{dpkg}{"$package"}},$_;
+    }
+    else
+    {
+      my $package_orig=$package;
+      $package =~ s,:.*$,,;
+      my $log=$_;
+      my $i =0;
+      my ($arch, $version);
+      open my $grep_available,
+        "grep-available -e -P  '^$package\$' -n -s Architecture,Version |";
+      while (<$grep_available>)
+      {
+        chomp;
+        $i++;
+        if ($i % 2 == 1) { $arch = $_; }
+        if ($i % 2 == 0)
+        {
+          $version = $_;
+          push @{$history{package}{dpkg}{"$package:$arch"}},
+            "Currently not installed, version candidate of".
+            " $package:$arch is $version";
+          push @{$history{package}{dpkg}{"$package:$arch"}},
+            "$log";
+          print "Añadimos '($package):($arch)' ... \n";
+          $packages_hash{"$package:$arch"}=1;
+          $ref_packages_version -> {"$package:$arch"} = $version;
+        }
+      }
+      if ($i == 0)
+      {
+        push @{$history{package}{dpkg}{"$package_orig"}},
+          "Currently not installed, there is not any version candidate";
+        $packages_hash{"$package_orig"}=1;
+        $ref_packages_version -> {"$package_orig"} = "not-version";
+      }
+      else
+      {
+          $packages_hash{"$package_orig"}=1;
+          # Probably wrong
+          $ref_packages_version -> {"$package_orig"} = $version;
+      }
+      # print join "," , keys %packages_hash;
+    }
+  }
+  foreach my $package (@{$packages})
+  {
+    if (not $history{package}{dpkg}{$package})
+    {
+      push @{$history{package}{dpkg}{$package}},
+            "Without changes since $first_action_date";
+    }
+  }
+  return %history;  
+}
+
+my %packages_version = read_package_list;
+my @packages=keys %packages_version;
+my %history = read_package_apt_history(\@packages);
+print Dumper (\@packages);
+%history = read_package_dpkg_history(\@packages,\%history,\%packages_version);
+@packages=sort @packages;
+
+#my $cui = new Curses::UI ( -color_support => 1, -debug => 1); 
+my $cui = new Curses::UI ( -color_support => 1) ; 
+my $win = $cui->add('window_id', 'Window');
+
+#my $fh = "binding.log"; open STDERR, ">$fh";
+
+my $packages_list = $win->add(
+  "packages_list",
+  "Listbox", 
+  -values => [@packages],
+  -onselchange => \&update_history,
+  -height => ${ENV{LINES}}-12,
+  -title => "Packages",
+  -border => "true",
+  -vscrollbar => "true",
+  ) || die ($!);
+$packages_list->clear_binding("option-select");
+$packages_list->set_binding ( sub { exit 0; }, "q" );
+$packages_list->set_binding ( sub { exit 0; }, "\cq" );
+my $package=$packages[0];
+
+my $history_tab = $win->add(
+  "tab",
+  "Notebook",
+  -y => $win->height()-12
+);
+$history_tab->set_binding ( sub { $packages_list -> focus(); }, CUI_TAB());
+
+my $apt_history_tab = $history_tab -> add_page ("Apt History");
+my $dpkg_history_tab = $history_tab -> add_page ("Dpkg History");
+my $apt_list = $apt_history_tab->add(
+  undef,
+  "Listbox",
+  -values => [@{$history{package}{apt}{$package}}],
+  -title => "Apt log of $package (currently $packages_version{$package})",
+  -tfg => "blue",
+  -bfg => "blue",
+  -border => "true",
+#  -height => 5,
+#  -y => ${ENV{LINES}}-6
+);
+$apt_list->clear_binding("option-select");
+$apt_list->set_binding ( sub { exit 0; }, "q" );
+$apt_list->set_binding ( sub { exit 0; }, "\cq" );
+
+my $dpkg_list = $dpkg_history_tab->add(
+  undef,
+  "Listbox",
+  -values => [@{$history{package}{dpkg}{$package}}],
+  -title => "Dpkg log of $package (currently $packages_version{$package})",
+  -tfg => "blue",
+  -bfg => "blue",
+  -border => "true",
+#  -height => 5,
+#  -y => ${ENV{LINES}}-6
+);
+$dpkg_list->clear_binding("option-select");
+$dpkg_list->set_binding ( sub { exit 0; }, "q" );
+$dpkg_list->set_binding ( sub { exit 0; }, "\cq" );
+
+sub update_history
+{
+  my $package_list = shift;
+  my $package = $packages_list->get_active_value ();
+  my $version_status = $packages_version {$package};
+  my $title_apt="Apt log of $package ".
+                "(currently (version_status) $version_status";
+  my $title_dpkg="Dpkg log of $package ".
+                "(currently (version_status) $version_status";
+
+  $apt_list -> values ([@{$history{package}{apt}{$package}}]);
+  $apt_list -> title ("$title_apt");
+  $dpkg_list -> values (@{$history{package}{dpkg}{$package}});
+  $dpkg_list -> title ("$title_dpkg");
+#  horrible hack !
+  $apt_list -> focus();
+  $dpkg_list -> focus();
+  $package_list -> focus();
+}
+
+
+$packages_list->focus();
+
+$cui->mainloop();
+
