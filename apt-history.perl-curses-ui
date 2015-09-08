@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+
 use warnings;
 use strict;
 
@@ -23,7 +24,7 @@ sub read_package_list
     chomp;
     $i++;
     if ($i % 4 == 1) { $package = $_; }
-    if ($i % 4 == 2) { $arch = $_; }
+    if ($i % 4 == 2) {    $arch = $_; }
     if ($i % 4 == 3) { $version = $_; }
     if ($i % 4 == 0) 
     {
@@ -39,6 +40,7 @@ my ($first_action_date);
 sub read_package_apt_history
 {
   my $packages = shift;
+  my $packages_version = shift;
   my %packages_hash = map { $_ => 1 } @$packages;
   my %history;
   my ($start_date, $end_date);
@@ -60,6 +62,8 @@ sub read_package_apt_history
       {
         $first_action_date = "$start_date $start_time";
       }
+      $end_date = "";  
+      $end_time = "";  
     
     }
     elsif (/^End-Date: (....-..-..) +(..:..:..)/)
@@ -99,7 +103,10 @@ sub read_package_apt_history
         {
           $packages_hash{"$package:$arch"}=1;
           push @$packages, "$package:$arch";
+          $packages_version -> {"$package:$arch"} = "unknown";
         }
+        push @{$history{package}{apt}{"$package:$arch"}},
+		"$start_date $start_time: $commandline # until $end_date $end_time";
         push @{$history{package}{apt}{"$package:$arch"}}, $resume_log;
         $error=0;
       }
@@ -147,10 +154,16 @@ sub read_package_dpkg_history
   my $ref_packages_version = shift;
   my %history=%{$ref_history};
   my %packages_hash = map { $_ => 1 } @$packages;
+  # Packages not installed and not seen at apt log
+  my %packages_forgotten;
+ 
+
   open my $hfh, '{
                   zcat $(ls -rt /var/log/dpkg.log*gz)
                   cat /var/log/dpkg.log ;
                 }|';
+  my $startup;
+  my %startup_tmp;
   while (<$hfh>)
   {
     my $package;
@@ -161,7 +174,6 @@ sub read_package_dpkg_history
       /x)
     {
       $package = $1;
-      push @{$history{package}{dpkg}{$package}},$_;
     }
     elsif (/....-..-..\s..:..:..\s
       status\s(?:config-files|
@@ -172,7 +184,6 @@ sub read_package_dpkg_history
       /x)
     {
       $package = $1;
-      push @{$history{package}{dpkg}{$package}},$_;
     }
     elsif (/....-..-..\s..:..:..\s
       conffile\s(\S+)/x)
@@ -182,8 +193,10 @@ sub read_package_dpkg_history
       # $package='' if ($package eq "");
       
     }
-    elsif (/....-..-..\s..:..:..\sstartup/)
+    elsif (/....-..-..\s..:..:..\s(startup.*)$/)
     {
+      $startup=$_;
+      %startup_tmp=();
       next;
     }
     else
@@ -192,49 +205,18 @@ sub read_package_dpkg_history
     }
     if ($packages_hash{"$package"})
     {
-      push @{$history{package}{dpkg}{"$package"}},$_;
+      if ($startup =~ /./ and not $startup_tmp{$package} )
+      {
+        push @{$history{package}{dpkg}{"$package"}},$startup;
+	$startup_tmp{$package} = 1;
+      }
+        push @{$history{package}{dpkg}{"$package"}},$_;
     }
     else
     {
-      my $package_orig=$package;
-      $package =~ s,:.*$,,;
-      my $log=$_;
-      my $i =0;
-      my ($arch, $version);
-      open my $grep_available,
-        "grep-available -e -P  '^$package\$' -n -s Architecture,Version |";
-      while (<$grep_available>)
-      {
-        chomp;
-        $i++;
-        if ($i % 2 == 1) { $arch = $_; }
-        if ($i % 2 == 0)
-        {
-          $version = $_;
-          push @{$history{package}{dpkg}{"$package:$arch"}},
-            "Currently not installed, version candidate of".
-            " $package:$arch is $version";
-          push @{$history{package}{dpkg}{"$package:$arch"}},
-            "$log";
-          print "Añadimos '($package):($arch)' ... \n";
-          $packages_hash{"$package:$arch"}=1;
-          $ref_packages_version -> {"$package:$arch"} = $version;
-        }
-      }
-      if ($i == 0)
-      {
-        push @{$history{package}{dpkg}{"$package_orig"}},
-          "Currently not installed, there is not any version candidate";
-        $packages_hash{"$package_orig"}=1;
-        $ref_packages_version -> {"$package_orig"} = "not-version";
-      }
-      else
-      {
-          $packages_hash{"$package_orig"}=1;
-          # Probably wrong
-          $ref_packages_version -> {"$package_orig"} = $version;
-      }
-      # print join "," , keys %packages_hash;
+      $packages_forgotten{$package} = 1;
+      $packages_hash{"$package"}=1;
+      push @{$history{package}{dpkg}{"$package"}},$_;
     }
   }
   foreach my $package (@{$packages})
@@ -245,29 +227,71 @@ sub read_package_dpkg_history
             "Without changes since $first_action_date";
     }
   }
+  my %packages_forgotten_by_arch;
+  foreach my $package (keys %packages_forgotten)
+  {
+    if ($package =~ /^([^:]*):(.*)$/)
+    {
+      my $name = $1;
+      my $arch = $2;
+      $packages_forgotten_by_arch{$arch}{$name}=1;
+      # Until we get correct version running grep-available ...
+      # or just in the case that $package is not available
+      $ref_packages_version -> {"$name:$arch"} = "not-version";
+      unshift @{$history{package}{dpkg}{"$name:$arch"}},
+               ("Currently not installed, there is not any version candidate");
+    }
+  }
+  foreach my $arch (keys %packages_forgotten_by_arch)
+  {
+    my $packages_forgotten_regex = join "|",
+                                  map { "^$_\$"; }
+                                  keys %{$packages_forgotten_by_arch{$arch}};
+    open my $grep_available,
+        "grep-available -n -e -P  '$packages_forgotten_regex'".
+                        " -a -F Architecture $arch".
+                        " -s Package,Version |";
+      while (<$grep_available>)
+      {
+        my ($package, $version);
+      	my $i =0;
+        chomp;
+        $i++;
+        if ($i % 2 == 1) { $package = $_; }
+        if ($i % 2 == 0)
+        {
+          $version = $_;
+          $history{package}{dpkg}{"$package:$arch"}[0]=
+                    "Currently not installed, version candidate of".
+                    " $package:$arch is $version";
+          print "Añadimos '($package):($arch)' ... \n";
+          $ref_packages_version -> {"$package:$arch"} = $version;
+        }
+      }
+    }
   return %history;  
 }
 
 my %packages_version = read_package_list;
 my @packages=keys %packages_version;
-my %history = read_package_apt_history(\@packages);
-print Dumper (\@packages);
+my %history = read_package_apt_history(\@packages, \%packages_version);
+# print Dumper (\@packages);
 %history = read_package_dpkg_history(\@packages,\%history,\%packages_version);
 @packages=sort @packages;
 
-#my $cui = new Curses::UI ( -color_support => 1, -debug => 1); 
-my $cui = new Curses::UI ( -color_support => 1) ; 
+my $cui = new Curses::UI ( -color_support => 1, -debug => 1); 
+# my $cui = new Curses::UI ( -color_support => 1) ; 
 my $win = $cui->add('window_id', 'Window');
 
-#my $fh = "binding.log"; open STDERR, ">$fh";
+my $fh = "binding.log"; open STDERR, ">$fh";
 
 my $packages_list = $win->add(
   "packages_list",
   "Listbox", 
   -values => [@packages],
   -onselchange => \&update_history,
-  -height => ${ENV{LINES}}-12,
-  -title => "Packages",
+  -height => ${ENV{LINES}}-15,
+  -title => "Packages (".scalar @packages.")",
   -border => "true",
   -vscrollbar => "true",
   ) || die ($!);
@@ -279,9 +303,22 @@ my $package=$packages[0];
 my $history_tab = $win->add(
   "tab",
   "Notebook",
-  -y => $win->height()-12
+  -height => 10,
+  -y => $win->height()-15,
 );
 $history_tab->set_binding ( sub { $packages_list -> focus(); }, CUI_TAB());
+
+my $status = $win->add ( "help text",
+  "Label",
+  -text => "j/k/up/down: change selection | /: search".
+           " | tab: change focus".
+           " | RePag/AvPag: change tab history | q: quit",
+  -border => 1,
+  -title => "keybindings",
+  -width => -1,
+  -y => -3,
+  -paddingspaces => 1
+);
 
 my $apt_history_tab = $history_tab -> add_page ("Apt History");
 my $dpkg_history_tab = $history_tab -> add_page ("Dpkg History");
@@ -320,10 +357,16 @@ sub update_history
   my $package_list = shift;
   my $package = $packages_list->get_active_value ();
   my $version_status = $packages_version {$package};
+  if (not $version_status)
+  {
+    open my $log,">apt-history.log";
+    print $log "Revisa $package\n" ;
+    exit 1;
+  }
   my $title_apt="Apt log of $package ".
-                "(currently (version_status) $version_status";
+                "(currently (version_status) $version_status)";
   my $title_dpkg="Dpkg log of $package ".
-                "(currently (version_status) $version_status";
+                "(currently (version_status) $version_status)";
 
   $apt_list -> values ([@{$history{package}{apt}{$package}}]);
   $apt_list -> title ("$title_apt");
@@ -339,4 +382,4 @@ sub update_history
 $packages_list->focus();
 
 $cui->mainloop();
-
+# set tabstop=2 expandtab
