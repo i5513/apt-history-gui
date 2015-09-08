@@ -190,8 +190,6 @@ sub read_package_dpkg_history
     {
       next ;
       #$package=`dpkg -S $1 2> /dev/null| grep -o '^[^:]*'`;
-      # $package='' if ($package eq "");
-      
     }
     elsif (/....-..-..\s..:..:..\s(startup.*)$/)
     {
@@ -275,15 +273,14 @@ sub read_package_dpkg_history
 my %packages_version = read_package_list;
 my @packages=keys %packages_version;
 my %history = read_package_apt_history(\@packages, \%packages_version);
-# print Dumper (\@packages);
 %history = read_package_dpkg_history(\@packages,\%history,\%packages_version);
 @packages=sort @packages;
 
-my $cui = new Curses::UI ( -color_support => 1, -debug => 1); 
-# my $cui = new Curses::UI ( -color_support => 1) ; 
+#my $cui = new Curses::UI ( -color_support => 1, -debug => 1); 
+my $cui = new Curses::UI ( -color_support => 1) ; 
 my $win = $cui->add('window_id', 'Window');
 
-my $fh = "binding.log"; open STDERR, ">$fh";
+#my $fh = "binding.log"; open STDERR, ">$fh";
 
 my $packages_list = $win->add(
   "packages_list",
@@ -330,8 +327,6 @@ my $apt_list = $apt_history_tab->add(
   -tfg => "blue",
   -bfg => "blue",
   -border => "true",
-#  -height => 5,
-#  -y => ${ENV{LINES}}-6
 );
 $apt_list->clear_binding("option-select");
 $apt_list->set_binding ( sub { exit 0; }, "q" );
@@ -345,8 +340,6 @@ my $dpkg_list = $dpkg_history_tab->add(
   -tfg => "blue",
   -bfg => "blue",
   -border => "true",
-#  -height => 5,
-#  -y => ${ENV{LINES}}-6
 );
 $dpkg_list->clear_binding("option-select");
 $dpkg_list->set_binding ( sub { exit 0; }, "q" );
