@@ -1,4 +1,6 @@
 #!/usr/bin/perl
+# vim: set tabstop=2
+# vim: set expandtab
 
 use warnings;
 use strict;
@@ -395,26 +397,52 @@ sub update_history
 $packages_list->focus();
 
 $cui->mainloop();
-# set tabstop=2 expandtab
+__END__
+
 =head1 NAME
 apt-history-curses - Browser your apt/dpkg logs by packages
  on a ncurses interface
+
+
 =head1 SYPNOSIS
+
 B<apt-history> 
+
+
 =head1 DESCRIPTION
-apt-history-curses will scan /var/log/{dpkg.*,apt/history*} and
- show you logs of the selected package
+
+apt-history-curses will scan /var/log/{dpkg.*,apt/history*} and show you logs
+ of the selected package
+
+
 =head1 DEPENDENCIES
+
 You will need to install the next packages:
+
  * libcurses-ui-perl (for ncurses widgets)
+
  * dctrl-tools (for read apt db status (/var/lib/dpkg/{available, status}))
+
  * gzip (for read compressed logs)
+
  * may be in the future apt-file (for guessing packages at conffile log stanza)
+
+
 =head1 OPTIONS
+
 There is not options
+
+
 =head1 CONFIGURATION FILE
+
 There is not configuration file
+
+
 =head1 LICENSE
+
 WTFPL
+
+
 =head1 AUTHOR
+
 Javier Barroso <javibarroso@gmail.com>
