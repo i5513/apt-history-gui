@@ -1,5 +1,5 @@
-This project read /var/log/apt/history* and /var/log/dpkg.*. And present you in a gui.
+This project read /var/log/apt/history* and /var/log/dpkg.*. And present you in a tui. Maybe I will write a gtk3 gui more later that soon ..
 
-You need to install libcurses-ui-perl
+You need to install libcurses-ui-perl, dctrl-tools, gzip and may be in the future apt-file
 
 Regards
