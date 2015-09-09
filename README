@@ -1,0 +1,5 @@
+This project read /var/log/apt/history* and /var/log/dpkg.*. And present you in a gui.
+
+You need to install libcurses-ui-perl
+
+Regards
