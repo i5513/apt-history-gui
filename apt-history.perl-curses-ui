@@ -3,10 +3,29 @@
 use warnings;
 use strict;
 
+BEGIN
+{
+  my @modules_failed;
+  foreach my $module (qw(Curses::UI Curses::UI::Common))
+  {
+    eval "use $module";
+    if ($@) {push @modules_failed,$module;}
+  }
+  die "Please install @modules_failed, I couldn't load them" 
+  if @modules_failed > 0;
+}
+
 use Curses::UI;
 use Curses::UI::Common;
 
 use Data::Dumper;
+
+sub check_dependencies
+{
+  ( -e "/usr/bin/grep-status" ) or die "Please install dctrl-tools";
+  ( -e "/bin/zcat" )            or die "Please install gzip";
+  # Check that modules are installed
+}
 
 sub read_package_list
 {
@@ -73,7 +92,7 @@ sub read_package_apt_history
 
       # package:architecture
       # first version
-      # possibly second version
+      # possible second version
       while ($changes =~ /
         ([a-z0-9][a-z0-9.+-]+):([a-z0-9-]+)\s 
         \(([A-Za-z0-9.~+-]+) 
@@ -106,7 +125,7 @@ sub read_package_apt_history
           $packages_version -> {"$package:$arch"} = "unknown";
         }
         push @{$history{package}{apt}{"$package:$arch"}},
-		"$start_date $start_time: $commandline # until $end_date $end_time";
+          "$start_date $start_time: $commandline # until $end_date $end_time";
         push @{$history{package}{apt}{"$package:$arch"}}, $resume_log;
         $error=0;
       }
@@ -199,14 +218,14 @@ sub read_package_dpkg_history
     }
     else
     {
-      print "$_ no encuadra ...\n";
+      print "$_ not match  ...\n";
     }
     if ($packages_hash{"$package"})
     {
       if ($startup =~ /./ and not $startup_tmp{$package} )
       {
         push @{$history{package}{dpkg}{"$package"}},$startup;
-	$startup_tmp{$package} = 1;
+  $startup_tmp{$package} = 1;
       }
         push @{$history{package}{dpkg}{"$package"}},$_;
     }
@@ -252,7 +271,7 @@ sub read_package_dpkg_history
       while (<$grep_available>)
       {
         my ($package, $version);
-      	my $i =0;
+        my $i =0;
         chomp;
         $i++;
         if ($i % 2 == 1) { $package = $_; }
@@ -270,6 +289,7 @@ sub read_package_dpkg_history
   return %history;  
 }
 
+check_dependencies;
 my %packages_version = read_package_list;
 my @packages=keys %packages_version;
 my %history = read_package_apt_history(\@packages, \%packages_version);
