@@ -29,7 +29,91 @@ sub check_dependencies
   # Check that modules are installed
 }
 
-sub read_package_list
+sub create_packages_list
+{
+  my $win = shift;
+  my $packages = shift;
+  my $packages_list = $win->add(
+    "packages_list",
+    "Listbox", 
+    -values => $packages,
+    #-height => ${ENV{LINES}}-15,
+    -height => $win->height()-15,
+    -title => "Packages (".scalar @$packages.")",
+    -border => "true",
+    -vscrollbar => "true",
+    ) || die ($!);
+  $packages_list->clear_binding("option-select");
+  $packages_list->set_binding ( sub { exit 0; }, "q" );
+  $packages_list->set_binding ( sub { exit 0; }, "\cq" );
+
+  return $packages_list;
+}
+
+sub create_history_tabs 
+{
+  my $win = shift;
+  my $history = shift;
+  my $packages_list = shift;
+  my $packages = shift;
+  my $packages_version = shift;
+  my $package = $packages->[0];
+  my $history_tab = $win->add(
+    "tab",
+    "Notebook",
+    -y => $win->height()-15,
+    -height => 12
+  );
+  $history_tab->set_binding ( sub { $packages_list -> focus(); }, CUI_TAB());
+
+  my $apt_history_tab = $history_tab -> add_page ("Apt History");
+  my $dpkg_history_tab = $history_tab -> add_page ("Dpkg History");
+  my $apt_list = $apt_history_tab->add(
+    undef,
+    "Listbox",
+    -values => [@{$history->{package}{apt}{$package}}],
+    -title => "Apt log of $package (currently $packages_version->{$package})",
+    -tfg => "blue",
+    -bfg => "blue",
+    -border => "true",
+  ) or die "$!";
+  $apt_list->clear_binding("option-select");
+  $apt_list->set_binding ( sub { exit 0; }, "q" );
+  $apt_list->set_binding ( sub { exit 0; }, "\cq" );
+
+  my $dpkg_list = $dpkg_history_tab->add(
+    undef,
+    "Listbox",
+    -values => [@{$history->{package}{dpkg}{$package}}],
+    -title => "Dpkg log of $package (currently $packages_version->{$package})",
+    -tfg => "blue",
+    -bfg => "blue",
+    -border => "true",
+  ) or die "$!";
+  $dpkg_list->clear_binding("option-select");
+  $dpkg_list->set_binding ( sub { exit 0; }, "q" );
+  $dpkg_list->set_binding ( sub { exit 0; }, "\cq" );
+
+  return ($dpkg_list,$apt_list);
+}
+
+sub create_status
+{
+  my $win = shift;
+  $win->add ( "help text",
+    "Label",
+    -text => "j/k/up/down: change selection | /: search".
+             " | tab: change focus".
+             " | RePag/AvPag: change tab history | q: quit",
+    -border => 1,
+    -title => "keybindings",
+    -width => -1,
+    -y => -1,
+    -paddingspaces => 1
+  ) or die ("Cannot create status widget $!");
+}
+
+sub read_packages_version
 {
   my %list;
   my $i=0;
@@ -171,9 +255,8 @@ sub read_package_apt_history
 sub read_package_dpkg_history
 {
   my $packages = shift;
-  my $ref_history = shift;
-  my $ref_packages_version = shift;
-  my %history=%{$ref_history};
+  my $history = shift;
+  my $packages_version = shift;
   my %packages_hash = map { $_ => 1 } @$packages;
   # Packages not installed and not seen at apt log
   my %packages_forgotten;
@@ -226,23 +309,23 @@ sub read_package_dpkg_history
     {
       if ($startup =~ /./ and not $startup_tmp{$package} )
       {
-        push @{$history{package}{dpkg}{"$package"}},$startup;
+        push @{$history->{package}{dpkg}{"$package"}},$startup;
   $startup_tmp{$package} = 1;
       }
-        push @{$history{package}{dpkg}{"$package"}},$_;
+        push @{$history->{package}{dpkg}{"$package"}},$_;
     }
     else
     {
       $packages_forgotten{$package} = 1;
       $packages_hash{"$package"}=1;
-      push @{$history{package}{dpkg}{"$package"}},$_;
+      push @{$history->{package}{dpkg}{"$package"}},$_;
     }
   }
   foreach my $package (@{$packages})
   {
-    if (not $history{package}{dpkg}{$package})
+    if (not $history->{package}{dpkg}{$package})
     {
-      push @{$history{package}{dpkg}{$package}},
+      push @{$history->{package}{dpkg}{$package}},
             "Without changes since $first_action_date";
     }
   }
@@ -256,8 +339,8 @@ sub read_package_dpkg_history
       $packages_forgotten_by_arch{$arch}{$name}=1;
       # Until we get correct version running grep-available ...
       # or just in the case that $package is not available
-      $ref_packages_version -> {"$name:$arch"} = "not-version";
-      unshift @{$history{package}{dpkg}{"$name:$arch"}},
+      $packages_version -> {"$name:$arch"} = "not-version";
+      unshift @{$history->{package}{dpkg}{"$name:$arch"}},
                ("Currently not installed, there is not any version candidate");
     }
   }
@@ -280,98 +363,22 @@ sub read_package_dpkg_history
         if ($i % 2 == 0)
         {
           $version = $_;
-          $history{package}{dpkg}{"$package:$arch"}[0]=
+          $history->{package}{dpkg}{"$package:$arch"}[0]=
                     "Currently not installed, version candidate of".
                     " $package:$arch is $version";
           print "Añadimos '($package):($arch)' ... \n";
-          $ref_packages_version -> {"$package:$arch"} = $version;
+          $packages_version -> {"$package:$arch"} = $version;
         }
       }
     }
-  return %history;  
 }
-
-check_dependencies;
-my %packages_version = read_package_list;
-my @packages=keys %packages_version;
-my %history = read_package_apt_history(\@packages, \%packages_version);
-%history = read_package_dpkg_history(\@packages,\%history,\%packages_version);
-@packages=sort @packages;
-
-#my $cui = new Curses::UI ( -color_support => 1, -debug => 1); 
-my $cui = new Curses::UI ( -color_support => 1) ; 
-my $win = $cui->add('window_id', 'Window');
-
-#my $fh = "binding.log"; open STDERR, ">$fh";
-
-my $packages_list = $win->add(
-  "packages_list",
-  "Listbox", 
-  -values => [@packages],
-  -onselchange => \&update_history,
-  -height => ${ENV{LINES}}-15,
-  -title => "Packages (".scalar @packages.")",
-  -border => "true",
-  -vscrollbar => "true",
-  ) || die ($!);
-$packages_list->clear_binding("option-select");
-$packages_list->set_binding ( sub { exit 0; }, "q" );
-$packages_list->set_binding ( sub { exit 0; }, "\cq" );
-my $package=$packages[0];
-
-my $history_tab = $win->add(
-  "tab",
-  "Notebook",
-  -y => $win->height()-15,
-  -height => 12
-);
-$history_tab->set_binding ( sub { $packages_list -> focus(); }, CUI_TAB());
-
-my $status = $win->add ( "help text",
-  "Label",
-  -text => "j/k/up/down: change selection | /: search".
-           " | tab: change focus".
-           " | RePag/AvPag: change tab history | q: quit",
-  -border => 1,
-  -title => "keybindings",
-  -width => -1,
-  -y => -1,
-  -paddingspaces => 1
-);
-
-my $apt_history_tab = $history_tab -> add_page ("Apt History");
-my $dpkg_history_tab = $history_tab -> add_page ("Dpkg History");
-my $apt_list = $apt_history_tab->add(
-  undef,
-  "Listbox",
-  -values => [@{$history{package}{apt}{$package}}],
-  -title => "Apt log of $package (currently $packages_version{$package})",
-  -tfg => "blue",
-  -bfg => "blue",
-  -border => "true",
-);
-$apt_list->clear_binding("option-select");
-$apt_list->set_binding ( sub { exit 0; }, "q" );
-$apt_list->set_binding ( sub { exit 0; }, "\cq" );
-
-my $dpkg_list = $dpkg_history_tab->add(
-  undef,
-  "Listbox",
-  -values => [@{$history{package}{dpkg}{$package}}],
-  -title => "Dpkg log of $package (currently $packages_version{$package})",
-  -tfg => "blue",
-  -bfg => "blue",
-  -border => "true",
-);
-$dpkg_list->clear_binding("option-select");
-$dpkg_list->set_binding ( sub { exit 0; }, "q" );
-$dpkg_list->set_binding ( sub { exit 0; }, "\cq" );
 
 sub update_history
 {
-  my $package_list = shift;
+  my $packages_list = shift;
+  my ($apt_list, $dpkg_list, $packages_version, $history) = @_;
   my $package = $packages_list->get_active_value ();
-  my $version_status = $packages_version {$package};
+  my $version_status = $packages_version -> {$package};
 #  if (not $version_status)
 #  {
 #    open my $log,">apt-history.log";
@@ -383,17 +390,36 @@ sub update_history
   my $title_dpkg="Dpkg log of $package ".
                 "(currently (version_status) $version_status)";
 
-  $apt_list -> values ([@{$history{package}{apt}{$package}}]);
+  $apt_list -> values ([@{$history->{package}{apt}{$package}}]);
   $apt_list -> title ("$title_apt");
-  $dpkg_list -> values (@{$history{package}{dpkg}{$package}});
+  $dpkg_list -> values (@{$history->{package}{dpkg}{$package}});
   $dpkg_list -> title ("$title_dpkg");
 #  horrible hack !
   $apt_list -> focus();
   $dpkg_list -> focus();
-  $package_list -> focus();
+  $packages_list -> focus();
 }
 
+check_dependencies;
+my %packages_version = read_packages_version;
+my @packages=keys %packages_version;
+my %history = read_package_apt_history(\@packages, \%packages_version);
+read_package_dpkg_history(\@packages,\%history,\%packages_version);
+@packages=sort @packages;
+my $cui = new Curses::UI ( -color_support => 1) ; 
+#my $cui = new Curses::UI ( -color_support => 1, -debug => 1); 
+#my $fh = "binding.log"; open STDERR, ">$fh";
+my $win = $cui->add('window_id', 'Window');
+my $packages_list = create_packages_list($win,\@packages);
+my ($dpkg_list,$apt_list) =  create_history_tabs($win,
+                      \%history,$packages_list,
+                      \@packages,\%packages_version);
+my $status = create_status($win);
 
+$packages_list -> onSelectionChange (
+	sub { my $p = shift;
+	update_history($p,$apt_list,$dpkg_list,\%packages_version,\%history);
+	});
 $packages_list->focus();
 
 $cui->mainloop();
