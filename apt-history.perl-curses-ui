@@ -31,10 +31,10 @@ sub check_dependencies
 
 sub init_curses_ui
 {
-  my $cui = new Curses::UI ( -color_support => 1);
+  my $cui = new Curses::UI ( -color_support => 1) or die "$!";
   #my $cui = new Curses::UI ( -color_support => 1, -debug => 1);
   #my $fh = "binding.log"; open STDERR, ">$fh";
-  my $win = $cui->add('window_id', 'Window');
+  my $win = $cui->add('window_id', 'Window') or die "$!";
   return ($cui,$win);
 }
 sub create_packages_list
@@ -63,9 +63,9 @@ sub create_history_tabs
   my $win = shift;
   my $history = shift;
   my $packages_list = shift;
-  my $packages = shift;
   my $packages_version = shift;
-  my $package = $packages->[0];
+  my @packages = keys %$packages_version;
+  my $package = $packages[0];
   my $history_tab = $win->add(
     "tab",
     "Notebook",
@@ -75,7 +75,6 @@ sub create_history_tabs
   $history_tab->set_binding ( sub { $packages_list -> focus(); }, CUI_TAB());
 
   my $apt_history_tab = $history_tab -> add_page ("Apt History");
-  my $dpkg_history_tab = $history_tab -> add_page ("Dpkg History");
   my $apt_list = $apt_history_tab->add(
     undef,
     "Listbox",
@@ -86,6 +85,7 @@ sub create_history_tabs
     -border => "true",
   ) or die "$!";
 
+  my $dpkg_history_tab = $history_tab -> add_page ("Dpkg History");
   my $dpkg_list = $dpkg_history_tab->add(
     undef,
     "Listbox",
@@ -405,13 +405,11 @@ my %packages_version = read_packages_version;
 my %history;
 read_package_apt_history(\%history,  \%packages_version);
 read_package_dpkg_history(\%history, \%packages_version);
-my @packages=sort keys %packages_version;
 my ($cui,$win)=init_curses_ui();
-my $packages_list = create_packages_list($win,\%packages_version);
+my $packages_list = create_packages_list($win, \%packages_version);
 my ($dpkg_list,$apt_list) =  create_history_tabs($win,
-                      \%history,$packages_list,
-                      \@packages,\%packages_version);
-my $status = create_status($win);
+                      \%history, $packages_list, \%packages_version);
+create_status($win);
 
 $packages_list -> onSelectionChange (
 	sub { my $p = shift;
