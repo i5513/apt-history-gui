@@ -40,14 +40,14 @@ sub init_curses_ui
 sub create_packages_list
 {
   my $win = shift;
-  my $packages = shift;
+  my $packages_version = shift;
+  my @packages = sort keys %$packages_version;
   my $packages_list = $win->add(
     "packages_list",
     "Listbox",
-    -values => $packages,
-    #-height => ${ENV{LINES}}-15,
+    -values => \@packages,
     -height => $win->height()-15,
-    -title => "Packages (".scalar @$packages.")",
+    -title => "Packages (".scalar @packages.")",
     -border => "true",
     -vscrollbar => "true",
     ) || die ($!);
@@ -85,9 +85,6 @@ sub create_history_tabs
     -bfg => "blue",
     -border => "true",
   ) or die "$!";
-  $apt_list->clear_binding("option-select");
-  $apt_list->set_binding ( sub { exit 0; }, "q" );
-  $apt_list->set_binding ( sub { exit 0; }, "\cq" );
 
   my $dpkg_list = $dpkg_history_tab->add(
     undef,
@@ -98,9 +95,13 @@ sub create_history_tabs
     -bfg => "blue",
     -border => "true",
   ) or die "$!";
-  $dpkg_list->clear_binding("option-select");
-  $dpkg_list->set_binding ( sub { exit 0; }, "q" );
-  $dpkg_list->set_binding ( sub { exit 0; }, "\cq" );
+
+  foreach my $list ($apt_list, $dpkg_list)
+  {
+    $list->clear_binding("option-select");
+    $list->set_binding ( sub { exit 0; }, "q" );
+    $list->set_binding ( sub { exit 0; }, "\cq" );
+  }
 
   return ($dpkg_list,$apt_list);
 }
@@ -151,8 +152,8 @@ sub read_packages_version
 my ($first_action_date);
 sub read_package_apt_history
 {
+  my $history = shift;
   my $packages_version = shift;
-  my %history;
   my ($start_date, $end_date);
   my ($start_time, $end_time);
   my ($commandline, $action, $changes,$error)=("","","",0);
@@ -212,9 +213,9 @@ sub read_package_apt_history
         {
           $packages_version -> {"$package:$arch"} = "unknown";
         }
-        push @{$history{package}{apt}{"$package:$arch"}},
+        push @{$history->{package}{apt}{"$package:$arch"}},
           "$start_date $start_time: $commandline # until $end_date $end_time";
-        push @{$history{package}{apt}{"$package:$arch"}}, $resume_log;
+        push @{$history->{package}{apt}{"$package:$arch"}}, $resume_log;
         $error=0;
       }
     }
@@ -232,15 +233,14 @@ sub read_package_apt_history
       $error=1;
     }
   }
-  foreach my $package (sort keys %$packages_version)
+  foreach my $package (keys %$packages_version)
   {
-    if (not $history{package}{apt}{$package})
+    if (not $history->{package}{apt}{$package})
     {
-      push @{$history{package}{apt}{$package}},
+      push @{$history->{package}{apt}{$package}},
             "Without changes since $first_action_date";
     }
   }
-  return %history;
 }
 
 #
@@ -256,10 +256,9 @@ sub read_package_apt_history
 
 sub read_package_dpkg_history
 {
-  my $packages = shift;
   my $history = shift;
   my $packages_version = shift;
-  my %packages_hash = map { $_ => 1 } @$packages;
+  my %packages_hash = map { $_ => 1 } keys %$packages_version;
   # Packages not installed and not seen at apt log
   my %packages_forgotten;
 
@@ -322,7 +321,7 @@ sub read_package_dpkg_history
       push @{$history->{package}{dpkg}{"$package"}},$_;
     }
   }
-  foreach my $package (@{$packages})
+  foreach my $package (keys %$packages_version)
   {
     if (not $history->{package}{dpkg}{$package})
     {
@@ -403,11 +402,12 @@ sub update_history
 
 check_dependencies;
 my %packages_version = read_packages_version;
+my %history;
+read_package_apt_history(\%history,  \%packages_version);
+read_package_dpkg_history(\%history, \%packages_version);
 my @packages=sort keys %packages_version;
-my %history = read_package_apt_history(\%packages_version);
-read_package_dpkg_history(\@packages,\%history,\%packages_version);
 my ($cui,$win)=init_curses_ui();
-my $packages_list = create_packages_list($win,\@packages);
+my $packages_list = create_packages_list($win,\%packages_version);
 my ($dpkg_list,$apt_list) =  create_history_tabs($win,
                       \%history,$packages_list,
                       \@packages,\%packages_version);
