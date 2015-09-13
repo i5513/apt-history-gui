@@ -13,7 +13,7 @@ BEGIN
     eval "use $module";
     if ($@) {push @modules_failed,$module;}
   }
-  die "Please install @modules_failed, I couldn't load them" 
+  die "Please install @modules_failed, I couldn't load them"
   if @modules_failed > 0;
 }
 
@@ -29,13 +29,21 @@ sub check_dependencies
   # Check that modules are installed
 }
 
+sub init_curses_ui
+{
+  my $cui = new Curses::UI ( -color_support => 1);
+  #my $cui = new Curses::UI ( -color_support => 1, -debug => 1);
+  #my $fh = "binding.log"; open STDERR, ">$fh";
+  my $win = $cui->add('window_id', 'Window');
+  return ($cui,$win);
+}
 sub create_packages_list
 {
   my $win = shift;
   my $packages = shift;
   my $packages_list = $win->add(
     "packages_list",
-    "Listbox", 
+    "Listbox",
     -values => $packages,
     #-height => ${ENV{LINES}}-15,
     -height => $win->height()-15,
@@ -50,7 +58,7 @@ sub create_packages_list
   return $packages_list;
 }
 
-sub create_history_tabs 
+sub create_history_tabs
 {
   my $win = shift;
   my $history = shift;
@@ -118,12 +126,12 @@ sub read_packages_version
   my %list;
   my $i=0;
   my ($package, $arch, $status, $version);
-  
+
   open my $grep_status,  "grep-status -n -FPackage '' ".
         " -s Package -s Architecture".
         " -s Version -s Status -n |".
         "grep . |";
-  
+
   while (<$grep_status>)
   {
     chomp;
@@ -131,12 +139,11 @@ sub read_packages_version
     if ($i % 4 == 1) { $package = $_; }
     if ($i % 4 == 2) {    $arch = $_; }
     if ($i % 4 == 3) { $version = $_; }
-    if ($i % 4 == 0) 
+    if ($i % 4 == 0)
     {
       $status = $_; $status =~ s, ,/,g ;
       $list{"$package:$arch"}="$version"."_"."$status";
     }
-    
   }
   return %list;
 }
@@ -144,16 +151,14 @@ sub read_packages_version
 my ($first_action_date);
 sub read_package_apt_history
 {
-  my $packages = shift;
   my $packages_version = shift;
-  my %packages_hash = map { $_ => 1 } @$packages;
   my %history;
   my ($start_date, $end_date);
   my ($start_time, $end_time);
   my ($commandline, $action, $changes,$error)=("","","",0);
   my ($resume_log, $message_error);
 
-  open my $hfh, '{ 
+  open my $hfh, '{
     zcat $(ls -rt /var/log/apt/history.log*gz)
     cat /var/log/apt/history.log;
     } |';
@@ -161,28 +166,27 @@ sub read_package_apt_history
   {
     if (/^Start-Date: (....-..-..) +(..:..:..)/)
     {
-      $start_date = $1;  
+      $start_date = $1;
       $start_time = $2;
       if (not $first_action_date)
       {
         $first_action_date = "$start_date $start_time";
       }
-      $end_date = "";  
-      $end_time = "";  
-    
+      $end_date = "";
+      $end_time = "";
     }
     elsif (/^End-Date: (....-..-..) +(..:..:..)/)
     {
-      $end_date = $1;  
-      $end_time = $2;  
+      $end_date = $1;
+      $end_time = $2;
 
       # package:architecture
       # first version
       # possible second version
       while ($changes =~ /
-        ([a-z0-9][a-z0-9.+-]+):([a-z0-9-]+)\s 
-        \(([A-Za-z0-9.~+-]+) 
-        (?:,\s([A-Za-z0-9.~+-]+))? 
+        ([a-z0-9][a-z0-9.+-]+):([a-z0-9-]+)\s
+        \(([A-Za-z0-9.~+-]+)
+        (?:,\s([A-Za-z0-9.~+-]+))?
         \)
         /xg)
       {
@@ -204,10 +208,8 @@ sub read_package_apt_history
           $resume_log="$start_date $start_time:".
                       " $action $arch ($version_transition)";
         }
-        if (not $packages_hash{"$package:$arch"})
+        if (not $packages_version->{"$package:$arch"})
         {
-          $packages_hash{"$package:$arch"}=1;
-          push @$packages, "$package:$arch";
           $packages_version -> {"$package:$arch"} = "unknown";
         }
         push @{$history{package}{apt}{"$package:$arch"}},
@@ -230,7 +232,7 @@ sub read_package_apt_history
       $error=1;
     }
   }
-  foreach my $package (@{$packages})
+  foreach my $package (sort keys %$packages_version)
   {
     if (not $history{package}{apt}{$package})
     {
@@ -241,7 +243,7 @@ sub read_package_apt_history
   return %history;
 }
 
-# 
+#
 #      5 conffile   (add apt-file?)
 #   9828 configure
 #   1009 install
@@ -260,7 +262,6 @@ sub read_package_dpkg_history
   my %packages_hash = map { $_ => 1 } @$packages;
   # Packages not installed and not seen at apt log
   my %packages_forgotten;
- 
 
   open my $hfh, '{
                   zcat $(ls -rt /var/log/dpkg.log*gz)
@@ -402,14 +403,10 @@ sub update_history
 
 check_dependencies;
 my %packages_version = read_packages_version;
-my @packages=keys %packages_version;
-my %history = read_package_apt_history(\@packages, \%packages_version);
+my @packages=sort keys %packages_version;
+my %history = read_package_apt_history(\%packages_version);
 read_package_dpkg_history(\@packages,\%history,\%packages_version);
-@packages=sort @packages;
-my $cui = new Curses::UI ( -color_support => 1) ; 
-#my $cui = new Curses::UI ( -color_support => 1, -debug => 1); 
-#my $fh = "binding.log"; open STDERR, ">$fh";
-my $win = $cui->add('window_id', 'Window');
+my ($cui,$win)=init_curses_ui();
 my $packages_list = create_packages_list($win,\@packages);
 my ($dpkg_list,$apt_list) =  create_history_tabs($win,
                       \%history,$packages_list,
@@ -432,7 +429,7 @@ apt-history-curses - Browser your apt/dpkg logs by packages
 
 =head1 SYPNOSIS
 
-B<apt-history> 
+B<apt-history>
 
 
 =head1 DESCRIPTION
