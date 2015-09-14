@@ -186,14 +186,17 @@ sub read_package_apt_history
       # possible second version
       while ($changes =~ /
         ([a-z0-9][a-z0-9.+-]+):([a-z0-9-]+)\s
-        \(([A-Za-z0-9.~+-]+)
-        (?:,\s([A-Za-z0-9.~+-]+))?
-        \)
+        \(([A-Za-z0-9.~+-]+)? # Purge log not show any version
+        (?:,\s([A-Za-z0-9.~+-]+))?\)
         /xg)
       {
         my $package=$1;
         my $arch=$2;
-        my $version_1=$3;
+        my $version_1='unknown';
+        if ($3)
+        {
+          $version_1="$3";
+        }
         my $version_transition=$version_1;
         if ($4) {
           $version_transition .= " => $4";
@@ -319,6 +322,8 @@ sub read_package_dpkg_history
       $packages_forgotten{$package} = 1;
       $packages_hash{"$package"}=1;
       push @{$history->{package}{dpkg}{"$package"}},$_;
+      push @{$history->{package}{apt}{"$package"}},
+             "Not log found about $package at /var/log/apt/history.log*";
     }
   }
   foreach my $package (keys %$packages_version)
@@ -389,7 +394,6 @@ sub update_history
                 "(currently (version_status) $version_status)";
   my $title_dpkg="Dpkg log of $package ".
                 "(currently (version_status) $version_status)";
-
   $apt_list -> values ([@{$history->{package}{apt}{$package}}]);
   $apt_list -> title ("$title_apt");
   $dpkg_list -> values (@{$history->{package}{dpkg}{$package}});
